@@ -10,7 +10,7 @@ Features
 
 In version 1.0 it explicitly
 
-* Replaces all namespaces with the string database.collection
+* Replaces all namespaces with the string "database.collection"
 * Replaces all commands,queries etc with { field : value }
 * Removes any non cluster IP adresses
 * Removes any usernames
@@ -18,7 +18,9 @@ In version 1.0 it explicitly
 
 Philosophy
 ----------
+* It is designed to require no additional python modules ot be installed.
+* Is is intended to be easy to inspect and reason about what it is doing.
+* It does not currently replace literals with a hash or derived value as that allows guessing of original values
 
-It is designed to require no additional python modules ot be installed.
-Is is intended to be easy to inspect and reason about what it is doing.
+These rules *may* change - for example we may take an approach to consistently renaming namespaces and fields
 
