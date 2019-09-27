@@ -10,21 +10,26 @@ from pprint import pprint
 def eprint(*args, **kwargs):
 	print(*args, file=sys.stderr, **kwargs)
 
-unredacted = open("unredacted_lines.log",'w')
-
 def log_unredacted(line):
-	unredacted.write(line+"\n")
+	unredacted_log.write(line+"\n")
+
+#Used to flag is an element o a tuple should be redacted
+def redact(x):
+	return -(x+1)
 
 
-phonetic = ['alpha','bravo','charlie','delta','echo','foxtrot','golf','hotel',
+
+phonetic_alphabet = ['alpha','bravo','charlie','delta','echo','foxtrot','golf','hotel',
 'indigo','juliet','kilo','lima','mike','november''oscar','papa','quebec',
 'romeo','sierra','tango','uniform','victor','whisky','xray','yankee','zulu']
 
-passthrough_groups = ["CONNPOOL","RECOVERY","REPL","STORAGE","JOURNAL","CONTROL","FTDC","ASIO","TRACKING"]
+#Log messages in these classed are internal and OK to keep as they are
+passthrough_groups = ["REPL_HB","CONNPOOL","RECOVERY","REPL","STORAGE","JOURNAL","CONTROL","FTDC","ASIO","TRACKING"]
 
+#Regex to Match a log line
 timestamp_pattern = r"([0-9T:\+\.\-]{28})"
 level_pattern = r"([IEWD])"
-logarea_pattern = r"(CONNPOOL|COMMAND|TRACKING|NETWORK|REPL|ACCESS|WRITE|QUERY|ASIO|FTDC|CONTROL|INDEX|JOURNAL|STORAGE|RECOVERY|SHARDING|-)"
+logarea_pattern = r"(REPL_HB,CONNPOOL|COMMAND|TRACKING|NETWORK|REPL|ACCESS|WRITE|QUERY|ASIO|FTDC|CONTROL|INDEX|JOURNAL|STORAGE|RECOVERY|SHARDING|-)"
 connection_no_pattern  = r"\[(.*?)\]"
 optype_pattern = r"([a-zA-Z_\-:\*]*)"
 rest_of_line_pattern = r"(.*)$"
@@ -34,6 +39,8 @@ pattern = "^%s +%s +%s +%s +%s *%s" % (timestamp_pattern,level_pattern,
 									 optype_pattern,rest_of_line_pattern)
 
 linere = re.compile(pattern)
+
+#How well we are doing
 unknown_format_count = 0
 match_count = 0
 
@@ -42,8 +49,7 @@ match_count = 0
 # Define the lines we are happy to output and their redaction
 #This code doesnt remote but rather parses and constructs.
 
-def redact(x):
-	return -(x+1)
+#Special cases 
 
 UNCHANGED = (r"^(.*)","%s")
 REDACTALL = (r"^(.*)$","%s",(redact(0),))
@@ -122,7 +128,7 @@ approved_outputs = {
 					 "%s %s %s",(redact(0),redact(1),2)),
 "QUERY_warning:" : REDACTALL,
 "QUERY_Shard" : (r"^request for shard shard : (.*)$",
-					 "request for shard shard : %s",(redact(0))),
+					 "request for shard shard : %s",(redact(0),)),
 #Index build always leaks field name so we only show a bit
 "INDEX_build" : (r"^index +(.*?) +(.*?)(scanned.*)?",
 				  "index %s %s %s",(0,redact(1),2)),
@@ -130,7 +136,7 @@ approved_outputs = {
 #building index
 "INDEX_" : UNCHANGED,
 "INDEX_ns:" : (r"^(.*?) key: (.*)",
-				  "%s key: %s",(redact(1),redact(2))),
+				  "%s key: %s",(redact(0),redact(1))),
 "ACCESS_Successfully" : (r"^authenticated as principal (.*) on (.*)",
 						  "authenticated as principal %s on %s",(redact(0),redact(1))),
 "ACCESS_note:": UNCHANGED,
@@ -143,8 +149,8 @@ approved_outputs = {
 "-_caught" : UNCHANGED
 }
 
-#After some thought - convert any strings by converting to a 
-#low cardinaluity hash and then using the to lookup a substitution table
+#After some thought on the best approach - convert any strings by converting to a 
+#low cardinality hash and then using the to lookup a substitution table
 #This does let you see if a particular word fits, but also 1000s of other workds work 
 #too so is not quite the leakage of a real hash
 linesplit = re.compile(r'([\W]+)')
@@ -165,25 +171,26 @@ def obfuscate(instring):
 				operator = False
 		else:
 			try:
-				p = int(p)
-				#Trust me - hashing an integer is the integer :O
+				p = int(p) #Exception if not a number
+				#Hashing an integer returns itself so cast it
 				#But keep 1 and 0 as is
 				if p == 1 or p == 0:
 					rval = rval + str(p)
 				else:
-					p = hash(str(p))%99
+					p = hash(str(p)+"a")%99
 					rval = rval + str(p)
 			except Exception as e:
 				#Short strings starting with $ that are not numbers are shown!
-				#On balance they are operators
-				if operator == True and len(p)<7:
+				#On balance they are operators lie $gt or $indexOf
+				if operator == True and len(p)<9:
 					rval=rval+p
 				else:
-					hv = hash(p)%25
-					rval=rval+phonetic[hv]
+					hv = hash(p) % (len(phonetic_alphabet)-1)
+					rval=rval+phonetic_alphabet[hv]
 			operator = False
 
 	return rval
+
 
 def clean_string(groups,processor):
 	newgroups = []
@@ -234,35 +241,41 @@ def process_logline(groups):
 		log_unredacted("NO LOGLINE PROCESSOR: "+ "_".join(groups))
 		return None
 	else:
-		return process_detail(groups,line_processor)
+		try:
+			return process_detail(groups,line_processor)
+		except Exception as e:
+			eprint(e)
+			eprint(groups)
+			sys.exit(1)
 
 
+if __name__ == '__main__':
+	if len(sys.argv) != 2:
+		eprint ("Usage: python logredact.py <logfile>")
+		sys.exit(1)
 
-if len(sys.argv) != 2:
-	eprint ("Usage: python logredact.py <logfile>")
-	sys.exit(1)
+	#Logfile for writing out lines we can't redact
+	unredacted_log =  open("unredacted_lines.log",'w')
 
-
-
-for logline in open(sys.argv[1],'r'):
-	o = linere.match(logline)
-	if o != None:
-			groups = o.groups()
-			#Internal events known to have no user data
-			if  groups[2] in passthrough_groups:
-				match_count += 1
-				print(" ".join(groups[:3])+" ["+groups[3]+"] "+groups[4]+ " "+groups[5])
-			else:
-				redacted = process_logline(groups)
-				if redacted != None:
+	for logline in open(sys.argv[1],'r'):
+		o = linere.match(logline)
+		if o:
+				groups = o.groups()
+				#Internal events known to have no user data
+				if  groups[2] in passthrough_groups:
 					match_count += 1
-					print(" ".join(groups[:3])+" ["+groups[3]+"] "+groups[4]+ " "+redacted)
+					print(" ".join(groups[:3])+" ["+groups[3]+"] "+groups[4]+ " "+groups[5])
 				else:
-					unknown_format_count += 1
-	else:
-			#Do NOT print any lines we can't positively identify
-			log_unredacted("UNKNOWN LOGLINE FORMAT: %s" % logline)
-			unknown_format_count += 1
+					redacted = process_logline(groups)
+					if redacted:
+						match_count += 1
+						print(" ".join(groups[:3])+" ["+groups[3]+"] "+groups[4]+ " "+redacted)
+					else:
+						unknown_format_count += 1
+		else:
+				#Do NOT print any lines we can't positively identify
+				log_unredacted("UNKNOWN LOGLINE FORMAT: %s" % logline)
+				unknown_format_count += 1
 
 
-eprint("matched: %d unknown: %d\n" % (match_count,unknown_format_count) )
+	eprint("Censored %d lines. Failed to redact %d lines (wrote to unredacted.log)\n" % (match_count,unknown_format_count) )
