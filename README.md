@@ -6,6 +6,7 @@ This is intended to take a prescriptive approach to censoring mongodb logfiles.
 Rather than take an approach of removing potentially sensitive data as [https://github.com/rueckstiess/fruitsalad] does. mlogcensor only includes line in the output it can positively identify and can remove known data from.
 
 It requires python 3
+
 usage:
 
 `python3 mlogcensor.py mongod.log` 
