@@ -5,6 +5,9 @@ This is intended to take a prescriptive approach to censoring mongodb logfiles.
 
 Rather than take an approach of removing potentially sensitive data as [https://github.com/rueckstiess/fruitsalad] does. mlogcensor only includes line in the output it can positively identify and can remove known data from.
 
+It only supports MongoDB logs from version 2.6 onwards - if your log lines start fith a date in this format "Tue Dec  5 03:08:06.973" it will not work.
+
+
 It requires python 3
 
 usage:
